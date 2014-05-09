@@ -16,9 +16,7 @@
   ],
   "dependencies": {
     "lzma": "~1.3.7",
-    "commander": "~2.0.0",
-    "ByteBuffer":"~0.2.5"
-
+    "commander": "~2.0.0"
   },
   "engines": {
     "node": ">= 0.8.0"
