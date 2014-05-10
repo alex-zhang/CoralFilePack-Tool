@@ -13,9 +13,6 @@
  * @author Alex Zhang
  * 
  */
-
-var ByteBuffer = require('./ByteBuffer.js');
-
 function CoralFile() {
 	var mPureName;
 	var mFullName;
@@ -64,26 +61,23 @@ function CoralFile() {
 	}
 
 	this.deserialize = function(inputBytesBuffer) {
-		mFullName = inputBytesBuffer.string();
+		mFullName = inputBytesBuffer.readString();
 		updatePureNameAndExtentionByFullName();
 
 		mFileBuffer = null;
 
-		var mFileBufferLen = inputBytesBuffer.uint32();
+		var mFileBufferLen = inputBytesBuffer.readUInt32();
 		if(mFileBufferLen > 0) {
-			var mContentByteBuffer = new ByteBuffer();
-			mContentByteBuffer.byteArray(mFileBufferLen, inputBytesBuffer.byteArray(mFileBufferLen));
-			mFileBuffer = mContentByteBuffer.unpack();
+			mFileBuffer = inputBytesBuffer.readBuffer(mFileBufferLen);
 		}
 	}
 
 	this.serialize = function(outputBytesBuffer) {
-		outputBytesBuffer.string(this.fullName());
+		outputBytesBuffer.writeString(this.fullName());
 		var contentBytesLen = mFileBuffer ? mFileBuffer.length : 0;
-		outputBytesBuffer.uint32(contentBytesLen);
+		outputBytesBuffer.writeUInt32(contentBytesLen);
 		if(contentBytesLen > 0) {
-			var mContentByteBuffer = new ByteBuffer(mFileBuffer);
-			outputBytesBuffer.byteArray(contentBytesLen, mContentByteBuffer.byteArray(contentBytesLen));
+			outputBytesBuffer.writeBuffer(mFileBuffer);
 		}
 	}
 }

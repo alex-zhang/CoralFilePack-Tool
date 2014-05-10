@@ -28,7 +28,7 @@
  * 
  */
 
-var ByteBuffer = require('./ByteBuffer.js');
+var ByteArray = require('./ByteArray.js');
 var CoralFile = require('./CoralFile.js');
 var LZMA = require("lzma").LZMA;
 
@@ -41,8 +41,6 @@ function CoralPackFile() {
 	
 	var mFileCount = 0;
 	var mFileFullNameMap = [];
-	
-	var mContentBytes = null;//ByteBuffer
 
 	this.version = function() {
 		return mVersion;
@@ -137,25 +135,22 @@ function CoralPackFile() {
 		return file;
 	}
 
-	this.deserialize = function(inputByteBuffer, completeCallback) {
-		inputByteBuffer.vstring(FILE_FLAG.length);
-		mVersion = inputByteBuffer.string();
-		mIsContentCompress = !!inputByteBuffer.byte();
+	this.deserialize = function(bytesReadable, completeCallback) {
+		bytesReadable.readVString(FILE_FLAG.length);
+		mVersion = bytesReadable.readString();
+		mIsContentCompress = !!bytesReadable.readByte();
 		
-		mContentBytes = null;
-		var contentBytesLen = inputByteBuffer.uint32();
+		var contentBytesBuffer = null;
+		var contentBytesLen = bytesReadable.readUInt32();
 		if(contentBytesLen > 0) {
-			mContentBytes = new ByteBuffer();
-			mContentBytes.byteArray(contentBytesLen, inputByteBuffer.byteArray(contentBytesLen));
-			mContentBytes.resetOffset();
+			contentBytesBuffer = bytesReadable.readBuffer(contentBytesLen);
 
 			if(mIsContentCompress) {
 				//lzma
 				var lzmaIns = LZMA();
 				//syc process.
-				lzmaIns.decompress(mContentBytes.pack().toString("base64") ,function(lzmaResultStr) {
-					var lzmaBase64Buffer = new Buffer(lzmaResultStr, "base64");
-					mContentBytes = new ByteBuffer(lzmaBase64Buffer);
+				lzmaIns.decompress(contentBytesBuffer.toString("base64") ,function(lzmaResultStr) {
+					contentBytesBuffer = new Buffer(lzmaResultStr, "base64");
 					parseInputBytes();
 				})
 			} else {
@@ -163,22 +158,22 @@ function CoralPackFile() {
 			}
 
 			function parseInputBytes() {
-				mFileCount = mContentBytes.short();
+				var contentBytesReadable = ByteArray.createByteReadable(contentBytesBuffer);
+				mFileCount = contentBytesReadable.readUShort();
 
 				var fileBytesLen = 0;
-				var fileBytes;
+				var fileBytesReadable;
 				var file;
 
 				for(i = 0; i < mFileCount; i++) {
-					fileBytesLen = mContentBytes.uint32();
-					fileBytes = new ByteBuffer();
-					fileBytes.byteArray(fileBytesLen, mContentBytes.byteArray(fileBytesLen));
-					fileBytes.resetOffset();
+					fileBytesLen = contentBytesReadable.uint32();
+					if(fileBytesLen > 0) {
+						fileBytesReadable = ByteArray.createByteReadable(contentBytesReadable.readBuffer(fileBytesLen));
 
-					file = new CoralFile();
-					file.deserialize(fileBytes);
-					
-					addFile(file);
+						file = new CoralFile();
+						file.deserialize(fileBytesReadable);
+						addFile(file);	
+					}
 				}
 
 				if(completeCallback) {completeCallback()}
@@ -189,40 +184,51 @@ function CoralPackFile() {
 		}
 	}
 
-	this.serialize = function(outputByteBuffer, completeCallback) {
-		mContentBytes = null;
+	this.serialize = function(bytesWritable, completeCallback) {
+		var contentBytesWritable = null;
 
 		if(mFileCount > 0) {
-			mContentBytes = new ByteBuffer();
-			mContentBytes.short(mFileCount);
+			contentBytesWritable = ByteArray.createByteWritable();
+			contentBytesWritable.writeUShort(mFileCount);
 			
 			var fileBytesLen = 0;
-			var fileBytes;
-			var fileByteBuffer;
+			var fileBytesWritable;
+
 			var file;
 
 			for(var fullFileName in mFileFullNameMap) {
 				file = mFileFullNameMap[fullFileName];
 
-				fileBytes = new ByteBuffer();
-				file.serialize(fileBytes);
-				fileByteBuffer = fileBytes.pack();
-				fileBytes.resetOffset();
+				fileBytesWritable = ByteArray.createByteWritable();
+				file.serialize(fileBytesWritable);
 
-				fileBytesLen = fileByteBuffer.length;
-				mContentBytes.uint32(fileBytesLen);
-				mContentBytes.byteArray(fileBytesLen, fileBytes.byteArray(fileBytesLen));
+				fileBytesLen = fileBytesWritable.length();
+				contentBytesWritable.writeUInt32(fileBytesLen);
+				if(fileBytesLen > 0) {
+					contentBytesWritable.writeBuffer(fileBytesWritable.pack());
+				}
 			}
 			
 			if(mIsContentCompress) {
 				//lzma
 				var lzmaIns = LZMA();
 				//syc process.
-				lzmaIns.compress(mContentBytes.pack().toString("base64") , 1, function(lzmaResultStr) {
-					var lzmaBase64Buffer = new Buffer(lzmaResultStr, "base64");
-					mContentBytes = new ByteBuffer(lzmaBase64Buffer);
-					buildOutputBytes();
-				});
+				lzmaIns.compress(contentBytesWritable.pack().toString("base64") , 1, 
+					function(lzmaResultStr) {
+						var lzmaContentBuffer = new Buffer(lzmaResultStr, "base64");
+						contentBytesWritable = ByteArray.createByteWritable();
+						contentBytesWritable.writeBuffer(lzmaContentBuffer);
+
+						process.stdout.clearLine(); 
+  						process.stdout.cursorTo(0);
+
+						buildOutputBytes();
+					}, 
+					function(progress) {
+						process.stdout.clearLine(); 
+  						process.stdout.cursorTo(0);
+						process.stdout.write("progress " + Math.round(progress * 100));
+					});
 			} else {
 				buildOutputBytes();
 			}
@@ -232,17 +238,17 @@ function CoralPackFile() {
 
 		function buildOutputBytes() {
 
-			var mContentByteBuffer = mContentBytes ? mContentBytes.pack() : null;
-			var contentBytesLen = mContentByteBuffer ? mContentByteBuffer.length : 0;
+			var mContentByteBuffer = contentBytesWritable ? contentBytesWritable.pack() : null;
+			var contentBytesLen = mContentByteBuffer.length;
 		
-			outputByteBuffer.vstring(CoralPackFile.FILE_FLAG.length, CoralPackFile.FILE_FLAG);
-			outputByteBuffer.string(CoralPackFile.VERSION);
-			outputByteBuffer.byte(mIsContentCompress ? 1 : 0);
-			outputByteBuffer.uint32(contentBytesLen);
+			bytesWritable.writeVString(CoralPackFile.FILE_FLAG.length, CoralPackFile.FILE_FLAG);
+			bytesWritable.writeString(CoralPackFile.VERSION);
+			bytesWritable.writeByte(mIsContentCompress ? 1 : 0);
+			bytesWritable.writeUInt32(contentBytesLen);
 			
+			console.log("content size is ", contentBytesLen);
 			if(contentBytesLen > 0) {
-				mContentBytes.resetOffset();
-				outputByteBuffer.byteArray(contentBytesLen, mContentBytes.byteArray(contentBytesLen));
+				bytesWritable.writeBuffer(mContentByteBuffer);
 			}
 
 			if(completeCallback) {
